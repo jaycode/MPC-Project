@@ -75,35 +75,29 @@ epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
 
 ## Timestep Length and Elapsed Duration (N & dt)
 
-The final model uses `N = 5` and `dt = 0.15`. The value of N was chosen by trying out several other values and measuring their effects, that is, at speed 40 and dt 0.15:
+The final model uses `N = 7` and `dt = 0.1`. The value of N was chosen by trying out several other values and measuring their effects, that is, at speed 40 and dt 0.15:
 - Setting N to 20 causes the car to turn aggresively.
 - Setting N to 5 causes the car to turn slowly. It scratches the sidewalk at times.
-- Setting N to 7 causes the car to turn a bit more aggresively until it got stuck at a sidewalk.
+- Setting N to 7 causes the car to turn a bit more aggresively until it got stuck at a sidewalk. At max speed 80, and several adjustments however, it works perfectly for the car.
 
-The setting of elapsed duration `dt` was chosen based on 100 miliseconds latency + 50 miliseconds for other calculations per step.
+The setting of elapsed duration `dt` was chosen based on 100 miliseconds latency per step.
 
 ## Polynomial Fitting and MPC Preprocessing
 
 - The waypoints were preprocessed by converting them into local positions based on the car's location.
-- The first state's x position is changed to use 4.0 instead of 0.0. Interestingly, this update
-  increased the model's performance, likely due to the latency which caused the car's position is no longer at position 0 of the x-axis.
 
 ## Model Predictive Control with Latency
 
-As mentioned above, using `dt` of 0.15 and initial state's `x` of 4.0 ensured the system to perform optimally. To gain an optimal control of the car, we also implemented the following:
+As mentioned above, using `dt` of 0.1 ensured the system to perform optimally. To gain an optimal control of the car, we also implemented the following:
 
-- `delta_factor` to minimize gap between sequential actuations. This was calculated as follows:
-  ```
-  delta_factor = (v_diff_norm * 120) + (1 - sharpness_norm) * 100;
-  ```
-  Where `v_diff_norm` is the normalized difference between the car's speed and its reference/target speed, and `sharpness_norm` is the normaliized sharpness of the turn of given waypoints. This was found by using the first coefficient of the waypoint's polynomial function. A more accurate method is by using a calculated Radius of Curvature.
+- I adjusted the input states for latency i.e. using the car's position in the next predicted 100 milliseconds instead of the current position. This helped improving the driving performance.
 - Increase the importance of epsilon a.k.a. orientation difference between the waypoints and predicted states.
 - Decrease the importance of Cross Track Error, which, accompanied by the delta factor adjustment, helped the car in dealing with sharper turns.
 - Dynamic speed reference was implemented by looking at sharpness of turn. When the turn is sharp enough (which value found by experimenting), decrease the speed reference.
 
 ## Result
 
-Video is available [here](https://youtu.be/h1xSlS6ORk0).
+Video is available [here](https://youtu.be/AYXNlmw3f48).
 
 ## Self Drifting Car
 
