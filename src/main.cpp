@@ -12,6 +12,8 @@
 #include "MPC.h"
 #include "json.hpp"
 
+const double Lf = 2.67;
+
 // for convenience
 using json = nlohmann::json;
 
@@ -19,6 +21,21 @@ using json = nlohmann::json;
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
+
+// Add latency to state
+// Latency 
+void add_latency(Eigen::VectorXd& state, double a, double delta, double latency=0.1) {
+  double x = state[0];
+  double y = state[1];
+  double psi = state[2];
+  double v = state[3];
+
+  state[0] = x + v * cos(psi) * latency;
+  state[1] = y + v * sin(psi) * latency;
+  state[2] = psi - v / Lf * delta * latency;
+  state[3] = v + a * latency;
+}
+
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -91,9 +108,8 @@ int main() {
 
   // MPC is initialized here!
   MPC mpc;
-  int iters = 3;
 
-  h.onMessage([&mpc, &iters](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -117,8 +133,8 @@ int main() {
           double psi_unity = j[1]["psi_unity"];
           double v = j[1]["speed"];
 
-          double steer_value;
-          double throttle_value;
+          double steer_value = j[1]["steering_angle"];
+          double throttle_value = j[1]["throttle"];
 
           for(std::vector<int>::size_type i = 0; i != ptsx_v.size(); i++) {
             Eigen::Vector2f localpt = global2local(
@@ -140,7 +156,7 @@ int main() {
           // Interestingly, setting x to 4.0 gave better result,
           // possibly due to the latency, that the current position is
           // no longer at 0.0.
-          state << 4.0, 0.0, 0.0, v, cte, epsi;
+          state << 0.0, 0.0, 0.0, v, cte, epsi;
 
           std::vector<double> x_vals = {state[0]};
           std::vector<double> y_vals = {state[1]};
@@ -152,26 +168,28 @@ int main() {
           std::vector<double> a_vals = {};
 
           // Solve with MPC
-          for (size_t i = 0; i < iters; i++) {
-            // std::cout << "Iteration " << i << std::endl;
+          add_latency(state, throttle_value, steer_value);
 
-            auto vars = mpc.Solve(state, coeffs);
+          auto vars = mpc.Solve(state, coeffs);
 
-            x_vals.push_back(vars[0]);
-            y_vals.push_back(vars[1]);
-            psi_vals.push_back(vars[2]);
-            v_vals.push_back(vars[3]);
-            cte_vals.push_back(vars[4]);
-            epsi_vals.push_back(vars[5]);
+          // for (size_t i = 0; i < iters; i++) {
+          //   // std::cout << "Iteration " << i << std::endl;
 
-            delta_vals.push_back(vars[6]);
-            a_vals.push_back(vars[7]);
+          //   x_vals.push_back(vars[0]);
+          //   y_vals.push_back(vars[1]);
+          //   psi_vals.push_back(vars[2]);
+          //   v_vals.push_back(vars[3]);
+          //   cte_vals.push_back(vars[4]);
+          //   epsi_vals.push_back(vars[5]);
 
-            state << vars[0], vars[1], vars[2], vars[3], vars[4], vars[5];
-          }
+          //   delta_vals.push_back(vars[6]);
+          //   a_vals.push_back(vars[7]);
 
-          steer_value = delta_vals[0];
-          throttle_value = a_vals[0];
+          //   state << vars[0], vars[1], vars[2], vars[3], vars[4], vars[5];
+          // }
+
+          steer_value = vars[6];
+          throttle_value = vars[7];
 
           json msgJson;
 
@@ -183,14 +201,7 @@ int main() {
           //Display the MPC predicted trajectory 
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
-          for(std::vector<int>::size_type i = 0; i != x_vals.size(); i++) {
-            mpc_x_vals.push_back(x_vals[i]);
-            mpc_y_vals.push_back(y_vals[i]);
-          }
-
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Green line
-
+          mpc.GetPredictions(mpc_x_vals, mpc_y_vals);
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
 

@@ -1,9 +1,5 @@
 #include "MPC.h"
-#include <cppad/cppad.hpp>
-#include <cppad/ipopt/solve.hpp>
-#include "Eigen-3.3/Eigen/Core"
 
-using CppAD::AD;
 
 // Set the timestep length and duration
 
@@ -11,8 +7,8 @@ using CppAD::AD;
 // Setting N to 20 causes the car to turn aggresively.
 // Setting N to 5 causes the car to turn slowly. It scratches the sidewalk at times.
 // Setting N to 7 causes the car to turn a bit more aggresively until it got stuck at a sidewalk.
-size_t N = 5;
-double dt = 0.15;
+size_t N = 7;
+double dt = 0.1;
 
 // This value assumes the model presented in the classroom is used.
 //
@@ -28,8 +24,10 @@ const double Lf = 2.67;
 
 double ref_cte = 0;
 double ref_epsi = 0;
-double max_ref_v = 70;
-double min_ref_v = 55;
+// This can be set up to 90-ish, but for the sake of passing this project, let's do 80
+// to ensure the car not leaving the track at all.
+double max_ref_v = 80;
+double min_ref_v = 40;
 double ref_v = max_ref_v;
 
 // The solver takes all the state variables and actuator
@@ -60,6 +58,7 @@ double calc_curverad3(Eigen::VectorXd coeffs, double x) {
 
 class FG_eval {
  public:
+
   // Fitted polynomial coefficients
   Eigen::VectorXd coeffs;
   FG_eval(Eigen::VectorXd coeffs) { this->coeffs = coeffs; }
@@ -98,10 +97,11 @@ class FG_eval {
 
     // The part of the cost based on the reference state.
     for (int i = 0; i < N; i++) {
-      fg[0] += CppAD::pow(vars[v_start + i] - ref_v, 2);
+      fg[0] += 1.0 * CppAD::pow(vars[v_start + i] - ref_v, 2);
 
-      // The higher this is, the closer the green line to to yellow line.
-      fg[0] += 0.8 * CppAD::pow(vars[cte_start + i] - ref_cte, 2);
+      // The higher this value below is, the closer the green line to to yellow line.
+      // In effect, it will increase the likelihood the car will oscillate.
+      fg[0] += 40 * CppAD::pow(vars[cte_start + i] - ref_cte, 2);
 
       // Make the epsilon error more important i.e. preferring the same angle of yellow
       // and green lines. The default value sometimes produces erratic (green) lines.
@@ -122,7 +122,7 @@ class FG_eval {
     // So in here, the sharper the curveness, the smaller
     // its constraint, thus smaller the multiplying factor.
     // The higher this factor, the less likely car oscillates, but harder to turn.
-    AD<double> delta_factor;
+    // AD<double> delta_factor;
 
     // This formula works with ref_v of 30, but not any higher. It stopped working after
     // running for a while.
@@ -137,14 +137,14 @@ class FG_eval {
 
     // Delta factor works by balancing the factor from speed difference and 
     // sharpness of turn.
-    AD<double> v_diff = fabs(ref_v - vars[v_start]);
-    AD<double> v_diff_norm = v_diff / ref_v;
-    delta_factor = (v_diff_norm * 120) + (1 - sharpness_norm) * 100;
+    // AD<double> v_diff = fabs(ref_v - vars[v_start]);
+    // AD<double> v_diff_norm = v_diff / ref_v;
+    // delta_factor = (v_diff_norm * 50) + (1 - sharpness_norm) * 0.1;
     // std::cout << "delta_factor: " << delta_factor << std::endl;
 
     for (int i = 0; i < N - 2; i++) {
-      fg[0] += delta_factor * CppAD::pow(vars[delta_start + i + 1] - vars[delta_start + i], 2);
-      fg[0] += CppAD::pow(vars[a_start + i + 1] - vars[a_start + i], 2);
+      fg[0] += 0.1 * CppAD::pow(vars[delta_start + i + 1] - vars[delta_start + i], 2);
+      fg[0] += 0.1 * CppAD::pow(vars[a_start + i + 1] - vars[a_start + i], 2);
     }
 
     // Minimize the value gap between sequential actuations.
@@ -209,7 +209,11 @@ class FG_eval {
       fg[2 + x_start + i] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
       fg[2 + y_start + i] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
       fg[2 + psi_start + i] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
-      fg[2 + v_start + i] = v1 - (v0 + a0 * dt);
+
+      // The constant adds drag caused by external factors.
+      // When the constant value is correct, the speed is stable.
+      double constantValue =  0.1;
+      fg[2 + v_start + i] = v1 - (v0 + (a0 - constantValue) * dt);
 
       // This is important, without this the green line will go
       // the opposite direction to the yellow line.
@@ -235,7 +239,6 @@ MPC::~MPC() {}
 vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   bool ok = true;
   size_t i;
-  typedef CPPAD_TESTVECTOR(double) Dvector;
 
   double x = state[0];
   double y = state[1];
@@ -243,6 +246,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   double v = state[3];
   double cte = state[4];
   double epsi = state[5];
+
 
   size_t n_vars = (N * state.size()) + ((N - 1) * 2);
   // Set the number of constraints
@@ -287,7 +291,6 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // }
   // double curverad_norm = fabs(curverad - min_curverad) / fabs(max_curverad - min_curverad);
 
-
   // Set all non-actuators upper and lowerlimits
   // to the max negative and positive values.
   for (int i = 0; i < delta_start; i++) {
@@ -298,7 +301,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // std::cout << "v: " << v << std::endl;
   // std::cout << "vdiff: " << (ref_v - v) << std::endl;
   // double limit = fabs((ref_v - v) / ref_v);
-  double limit = 0.4;
+  double limit = 0.6;
   // std::cout << "limit: " << limit << std::endl;
   if (limit > 1.0) limit = 1.0;
 
@@ -322,7 +325,6 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
       ref_v = max_ref_v;
       vars_lowerbound[i] = -0.0;
       vars_upperbound[i] = 1.0;
-
     }
 
     // If normalized curverad is too high or too low, that means we are not sure about the
@@ -340,7 +342,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     // }
 
     // Standard
-    // vars_lowerbound[i] = -0.0;
+    // vars_lowerbound[i] = -0.2;
     // vars_upperbound[i] = 1.0;
   }
 
@@ -388,9 +390,6 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // Change this as you see fit.
   options += "Numeric max_cpu_time          0.5\n";
 
-  // place to return solution
-  CppAD::ipopt::solve_result<Dvector> solution;
-
   // solve the problem
   CppAD::ipopt::solve<Dvector, FG_eval>(
       options, vars, vars_lowerbound, vars_upperbound, constraints_lowerbound,
@@ -407,4 +406,11 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
           solution.x[psi_start + 1], solution.x[v_start + 1],
           solution.x[cte_start + 1], solution.x[epsi_start + 1],
           solution.x[delta_start],   solution.x[a_start]};
+}
+
+void MPC::GetPredictions(vector<double>& mpc_x_vals, vector<double>& mpc_y_vals) {
+  for (int i=0; i < N; i++) {
+    mpc_x_vals.push_back(solution.x[x_start + i]);
+    mpc_y_vals.push_back(solution.x[y_start + i]);
+  }
 }
